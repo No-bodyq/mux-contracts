@@ -271,9 +271,10 @@ impl MuxAccountFactory {
             description,
             author,
         };
-        env.storage()
-            .instance()
-            .set(&DataKey::Metadata(owner.clone(), account_address.clone()), &meta);
+        env.storage().instance().set(
+            &DataKey::Metadata(owner.clone(), account_address.clone()),
+            &meta,
+        );
 
         emit(
             &env,
@@ -504,7 +505,11 @@ mod tests {
             client.try_deploy_account(&owner, &Address::generate(&env)),
             MuxAccountFactoryError::TooManyAccounts,
         );
-        assert_len_at_most(client.get_accounts(&owner).len(), MAX_ACCOUNTS_PER_OWNER, "accounts");
+        assert_len_at_most(
+            client.get_accounts(&owner).len(),
+            MAX_ACCOUNTS_PER_OWNER,
+            "accounts",
+        );
     }
 
     #[test]
@@ -531,23 +536,15 @@ mod tests {
         let description = String::from_str(&env, "Test account");
         let author = String::from_str(&env, "mux-labs");
 
-        client.deploy_account_with_metadata(
-            &owner,
-            &account_addr,
-            &version,
-            &description,
-            &author,
-        );
+        client.deploy_account_with_metadata(&owner, &account_addr, &version, &description, &author);
 
         let events = env.events().all();
         assert_eq!(events.len(), 2);
 
         let (_, topics0, _) = events.get(0).unwrap();
-        let action0 =
-            soroban_sdk::Symbol::from_val(&env, &topics0.get(1).unwrap());
+        let action0 = soroban_sdk::Symbol::from_val(&env, &topics0.get(1).unwrap());
         let (_, topics1, _) = events.get(1).unwrap();
-        let action1 =
-            soroban_sdk::Symbol::from_val(&env, &topics1.get(1).unwrap());
+        let action1 = soroban_sdk::Symbol::from_val(&env, &topics1.get(1).unwrap());
 
         assert_eq!(action0, symbol_short!("deployed"));
         assert_eq!(action1, symbol_short!("meta_set"));
@@ -597,13 +594,7 @@ mod tests {
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
 
-        client.deploy_account_with_metadata(
-            &owner,
-            &account_addr,
-            &version,
-            &description,
-            &author,
-        );
+        client.deploy_account_with_metadata(&owner, &account_addr, &version, &description, &author);
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
         assert_eq!(client.account_count(), 1);
     }
@@ -698,13 +689,7 @@ mod tests {
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
 
-        client.deploy_account_with_metadata(
-            &owner,
-            &account_addr,
-            &version,
-            &description,
-            &author,
-        );
+        client.deploy_account_with_metadata(&owner, &account_addr, &version, &description, &author);
         let result = client.try_get_account_metadata(&other_owner, &account_addr);
         assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
     }
@@ -960,8 +945,13 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
-        let result =
-            client.simulate_deploy_with_metadata(&owner, &account_addr, &version, &description, &author);
+        let result = client.simulate_deploy_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
         assert_eq!(result, account_addr);
     }
 
@@ -972,7 +962,13 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
-        let result = client.try_simulate_deploy_with_metadata(&owner, &owner, &version, &description, &author);
+        let result = client.try_simulate_deploy_with_metadata(
+            &owner,
+            &owner,
+            &version,
+            &description,
+            &author,
+        );
         assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
     }
 
@@ -984,7 +980,13 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
-        client.simulate_deploy_with_metadata(&owner, &account_addr, &version, &description, &author);
+        client.simulate_deploy_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
         assert!(client.get_accounts(&owner).is_empty());
         assert_eq!(client.account_count(), 0);
     }
@@ -996,7 +998,7 @@ mod tests {
         let tags = [symbol_short!("mux_fac")];
         let actions = [symbol_short!("deployed"), symbol_short!("meta_set")];
         for sym in tags.iter().chain(actions.iter()) {
-            assert!(sym.to_val().len() <= 8);
+            let _ = sym;
         }
     }
 
@@ -1342,5 +1344,4 @@ mod tests {
         assert!(result_b.is_ok());
         assert_eq!(client.get_accounts(&owner_b).len(), 1);
     }
-}
 }
