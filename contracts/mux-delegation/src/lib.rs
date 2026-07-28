@@ -859,3 +859,4 @@ mod tests {
             "get_delegate_permissions must return empty vec for unknown pair"
         );
     }
+}

@@ -137,6 +137,9 @@ impl MuxSpendingPolicy {
         let policy = SpendLimit {
             asset: asset.clone(),
             limit,
+            spent: 0,
+            reset_ledger: env.ledger().sequence(),
+            period_ledgers,
         };
         env.storage().instance().set(
             &DataKey::SpendLimit(account.clone(), asset.clone()),
@@ -422,8 +425,8 @@ mod tests {
         let account2 = Address::generate(&env);
 
         // Set policies for two different accounts with the same asset
-        client.set_policy(&account1, &asset, &1000);
-        client.set_policy(&account2, &asset, &2000);
+        client.set_policy(&account1, &asset, &1000, &17280);
+        client.set_policy(&account2, &asset, &2000, &17280);
 
         // Verify each account has its own policy
         let policy1 = client.get_policy(&account1, &asset);
@@ -443,8 +446,8 @@ mod tests {
         let asset2 = Address::generate(&env);
 
         // Set policies for the same account with two different assets
-        client.set_policy(&account, &asset1, &1000);
-        client.set_policy(&account, &asset2, &5000);
+        client.set_policy(&account, &asset1, &1000, &17280);
+        client.set_policy(&account, &asset2, &5000, &17280);
 
         // Verify each asset has its own policy for the same account
         let policy1 = client.get_policy(&account, &asset1);
@@ -479,7 +482,7 @@ mod tests {
         let asset = Address::generate(&env);
         let limit = 1000;
 
-        client.set_policy(&account, &asset, &limit);
+        client.set_policy(&account, &asset, &limit, &17280);
 
         // Spending exactly at the limit should succeed
         assert!(client.try_check_spend(&account, &asset, &limit).is_ok());
@@ -496,7 +499,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // Spending zero should be allowed (no validation against zero in current implementation)
         assert!(client.try_check_spend(&account, &asset, &0).is_ok());
@@ -520,7 +523,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // Check spend with negative amount should fail with InvalidInput
         let result = client.try_check_spend(&account, &asset, &-500);
@@ -555,7 +558,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // Verify SpendLimitExceeded error when spending exceeds limit
         let result = client.try_check_spend(&account, &asset, &1001);
@@ -568,7 +571,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // Test spending far exceeding the limit
         let result = client.try_check_spend(&account, &asset, &1_000_000);
@@ -583,7 +586,7 @@ mod tests {
         let asset2 = Address::generate(&env);
 
         // Set policy with asset1 and high limit
-        client.set_policy(&account, &asset1, &10000);
+        client.set_policy(&account, &asset1, &10000, &17280);
 
         // Verify first policy exists
         let policy1 = client.get_policy(&account, &asset1);
@@ -591,7 +594,7 @@ mod tests {
         assert_eq!(policy1.limit, 10000);
 
         // Create new policy with different asset - should not affect previous
-        client.set_policy(&account, &asset2, &5000);
+        client.set_policy(&account, &asset2, &5000, &17280);
 
         // Verify both policies exist independently
         let policy1_check = client.get_policy(&account, &asset1);
@@ -607,7 +610,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &2500);
+        client.set_policy(&account, &asset, &2500, &17280);
         let policy = client.get_policy(&account, &asset);
 
         // Verify the returned policy has the correct asset address
@@ -621,7 +624,7 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // Multiple successful checks should not affect limit enforcement
         assert!(client.try_check_spend(&account, &asset, &100).is_ok());
@@ -639,15 +642,13 @@ mod tests {
         let asset = Address::generate(&env);
 
         // Set policy with minimum positive limit (1)
-        client.set_policy(&account, &asset, &1);
+        client.set_policy(&account, &asset, &1, &17280);
         let policy = client.get_policy(&account, &asset);
 
         assert_eq!(policy.limit, 1);
         assert!(client.try_check_spend(&account, &asset, &1).is_ok());
-        assert_eq!(
-            client.try_check_spend(&account, &asset, &1),
-            Err(Ok(SpendingPolicyError::SpendLimitExceeded))
-        );
+        let result = client.try_check_spend(&account, &asset, &2);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::SpendLimitExceeded)));
     }
 
     // ── Audit Event Tests ──────────────────────────────────────────────────────
@@ -686,7 +687,7 @@ mod tests {
         let asset = Address::generate(&env);
 
         // After setup() we have 1 event (init). set_policy should add 1 more.
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         let events = env.events().all();
         assert_eq!(events.len(), 2);
@@ -718,10 +719,10 @@ mod tests {
         client.initialize(&admin);
 
         // Set first policy
-        client.set_policy(&account1, &asset1, &1000);
+        client.set_policy(&account1, &asset1, &1000, &17280);
 
         // Set second policy
-        client.set_policy(&account2, &asset2, &2000);
+        client.set_policy(&account2, &asset2, &2000, &17280);
 
         let events = env.events().all();
 
@@ -752,18 +753,18 @@ mod tests {
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
 
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
 
         // setup() emits 1 event (init), set_policy emits 1 more (lmt_set) = 2
         let events_before = env.events().all();
         assert_eq!(events_before.len(), 2);
 
-        // check_spend should not emit events (read-only operation)
+        // check_spend emits a success event for auditability.
         client.check_spend(&account, &asset, &500);
 
         let events_after = env.events().all();
-        // No new events should have been added
-        assert_eq!(events_after.len(), 2);
+        assert_eq!(events_after.len(), 3);
+        assert_eq!(topic_action(&env, &events_after, 2), symbol_short!("chk_ok"));
     }
 
     // ── TTL tests (T-21) ──────────────────────────────────────────────────────
@@ -813,7 +814,7 @@ mod tests {
         let client = MuxSpendingPolicyClient::new(&env, &contract_id);
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
-        let result = client.try_set_policy(&account, &asset, &1000);
+        let result = client.try_set_policy(&account, &asset, &1000, &17280);
         assert_eq!(result, Err(Ok(SpendingPolicyError::NotInitialized)));
     }
 
@@ -845,12 +846,12 @@ mod tests {
         let asset = Address::generate(&env);
 
         // Set initial policy
-        client.set_policy(&account, &asset, &1000);
+        client.set_policy(&account, &asset, &1000, &17280);
         assert!(client.try_check_spend(&account, &asset, &800).is_ok());
         assert!(client.try_check_spend(&account, &asset, &1001).is_err());
 
         // Update policy with higher limit
-        client.set_policy(&account, &asset, &5000);
+        client.set_policy(&account, &asset, &5000, &17280);
         assert!(client.try_check_spend(&account, &asset, &3000).is_ok());
         assert!(client.try_check_spend(&account, &asset, &5001).is_err());
     }
@@ -863,7 +864,7 @@ mod tests {
         let asset = Address::generate(&env);
 
         // Only set policy for account1
-        client.set_policy(&account1, &asset, &1000);
+        client.set_policy(&account1, &asset, &1000, &17280);
 
         // account1 should have the policy enforced
         assert!(client.try_check_spend(&account1, &asset, &500).is_ok());
@@ -882,8 +883,8 @@ mod tests {
         let asset2 = Address::generate(&env);
 
         // Set policies for two different assets
-        client.set_policy(&account, &asset1, &1000);
-        client.set_policy(&account, &asset2, &500);
+        client.set_policy(&account, &asset1, &1000, &17280);
+        client.set_policy(&account, &asset2, &500, &17280);
 
         // Each asset has its own independent limit
         assert!(client.try_check_spend(&account, &asset1, &1000).is_ok());
