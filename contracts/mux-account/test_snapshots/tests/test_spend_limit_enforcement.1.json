@@ -130,18 +130,6 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "Executing"
-                            }
-                          ]
-                        },
-                        "val": {
-                          "bool": true
-                        }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
                               "symbol": "GuardianSet"
                             }
                           ]
@@ -685,7 +673,7 @@
             ],
             "data": {
               "error": {
-                "contract": 10
+                "contract": 6
               }
             }
           }
@@ -706,7 +694,7 @@
               },
               {
                 "error": {
-                  "contract": 10
+                  "contract": 6
                 }
               }
             ],
@@ -731,7 +719,7 @@
               },
               {
                 "error": {
-                  "contract": 10
+                  "contract": 6
                 }
               }
             ],

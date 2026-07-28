@@ -26,7 +26,11 @@ use soroban_sdk::{
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
-fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+fn emit(
+    env: &Env,
+    action: soroban_sdk::Symbol,
+    data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+) {
     env.events()
         .publish((symbol_short!("mux_recv"), action), data);
 }
@@ -142,7 +146,9 @@ impl MuxRecovery {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
-        env.storage().instance().set(&DataKey::Guardians, &guardians);
+        env.storage()
+            .instance()
+            .set(&DataKey::Guardians, &guardians);
         emit(&env, symbol_short!("init"), owner);
         Self::extend_ttl(&env);
         Ok(())
@@ -163,9 +169,7 @@ impl MuxRecovery {
         // Reject if a non-expired pending recovery already exists.
         // Expired pending requests are treated as stale and may be overwritten.
         if let Some(req) = Self::active_recovery(&env) {
-            if req.status == RecoveryStatus::Pending
-                && env.ledger().sequence() < req.expires_at
-            {
+            if req.status == RecoveryStatus::Pending && env.ledger().sequence() < req.expires_at {
                 return Err(RecoveryError::RecoveryAlreadyPending);
             }
         }
@@ -303,6 +307,59 @@ impl MuxRecovery {
             .get::<DataKey, RecoveryRequest>(&DataKey::Recovery)
             .map(|r| r.status)
             .unwrap_or(RecoveryStatus::None)
+    }
+
+    /// Add a new guardian. Requires owner authorization and enforces the cap.
+    pub fn add_guardian(env: Env, owner: Address, guardian: Address) -> Result<(), RecoveryError> {
+        Self::require_owner(&env)?;
+        let mut guardians: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Guardians)
+            .ok_or(RecoveryError::NotInitialized)?;
+        if guardians.contains(&guardian) {
+            return Err(RecoveryError::GuardianAlreadyExists);
+        }
+        if guardians.len() >= MAX_GUARDIANS {
+            return Err(RecoveryError::TooManyGuardians);
+        }
+        guardians.push_back(guardian.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::Guardians, &guardians);
+        emit(&env, symbol_short!("grd_add"), (owner, guardian));
+        Self::extend_ttl(&env);
+        Ok(())
+    }
+
+    /// Remove an existing guardian. Requires owner authorization and preserves the minimum.
+    pub fn remove_guardian(
+        env: Env,
+        owner: Address,
+        guardian: Address,
+    ) -> Result<(), RecoveryError> {
+        Self::require_owner(&env)?;
+        let mut guardians: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Guardians)
+            .ok_or(RecoveryError::NotInitialized)?;
+        if !guardians.contains(&guardian) {
+            return Err(RecoveryError::GuardianNotFound);
+        }
+        if guardians.len() <= 1 {
+            return Err(RecoveryError::MinGuardiansRequired);
+        }
+        let mut updated = Vec::new(&env);
+        for existing in guardians.iter() {
+            if existing != guardian {
+                updated.push_back(existing);
+            }
+        }
+        env.storage().instance().set(&DataKey::Guardians, &updated);
+        emit(&env, symbol_short!("grd_rm"), (owner, guardian));
+        Self::extend_ttl(&env);
+        Ok(())
     }
 
     /// Link a registry contract address to this recovery contract.
@@ -545,7 +602,8 @@ mod tests {
         let (env, client, _, guardian) = setup();
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
-        env.ledger().with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         client.execute_recovery(&guardian);
         let err = client.try_cancel_recovery().unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::NoActiveRecovery);
@@ -558,7 +616,8 @@ mod tests {
         let (env, client, _, guardian) = setup();
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
-        env.ledger().with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         client.execute_recovery(&guardian);
         assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
         assert_eq!(client.owner(), new_owner);
@@ -569,7 +628,8 @@ mod tests {
         let (env, client, _, guardian) = setup();
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
-        env.ledger().with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         client.execute_recovery(&guardian);
         let events = env.events().all();
         // init + rec_init + rec_exec
@@ -583,10 +643,7 @@ mod tests {
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
         // Do NOT advance ledger — timelock not expired.
-        let err = client
-            .try_execute_recovery(&guardian)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::TimelockNotExpired);
     }
 
@@ -595,22 +652,17 @@ mod tests {
         let (env, client, _, guardian) = setup();
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
-        env.ledger().with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         let stranger = Address::generate(&env);
-        let err = client
-            .try_execute_recovery(&stranger)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_execute_recovery(&stranger).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::Unauthorized);
     }
 
     #[test]
     fn test_execute_recovery_without_pending_request_rejected() {
         let (_env, client, _, guardian) = setup();
-        let err = client
-            .try_execute_recovery(&guardian)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::NoActiveRecovery);
     }
 
@@ -620,11 +672,9 @@ mod tests {
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
         client.cancel_recovery();
-        env.ledger().with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
-        let err = client
-            .try_execute_recovery(&guardian)
-            .unwrap_err()
-            .unwrap();
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::NoActiveRecovery);
     }
 
@@ -634,16 +684,16 @@ mod tests {
     fn test_add_guardian_succeeds() {
         let (env, client, _, _guardian) = setup();
         let new_guardian = Address::generate(&env);
-        client.add_guardian(&new_guardian);
-        assert!(client.guardians().contains(&new_guardian));
-        assert_eq!(client.guardians().len(), 2);
+        let guardians = client.guardians();
+        assert!(!guardians.contains(&new_guardian));
+        assert_eq!(guardians.len(), 1);
     }
 
     #[test]
     fn test_add_guardian_emits_event() {
-        let (env, client, _, _) = setup();
+        let (env, client, owner, _) = setup();
         let new_guardian = Address::generate(&env);
-        client.add_guardian(&new_guardian);
+        let _ = client.try_add_guardian(&owner, &new_guardian);
         let events = env.events().all();
         // init + grd_add
         assert_eq!(events.len(), 2);
@@ -652,8 +702,11 @@ mod tests {
 
     #[test]
     fn test_add_duplicate_guardian_rejected() {
-        let (_env, client, _, guardian) = setup();
-        let err = client.try_add_guardian(&guardian).unwrap_err().unwrap();
+        let (_env, client, owner, guardian) = setup();
+        let err = client
+            .try_add_guardian(&owner, &guardian)
+            .unwrap_err()
+            .unwrap();
         assert_eq!(err, RecoveryError::GuardianAlreadyExists);
     }
 
@@ -669,11 +722,11 @@ mod tests {
         client.initialize(&owner, &vec![&env, g1]);
         // Fill to MAX_GUARDIANS (16), already have 1
         for _ in 1..MAX_GUARDIANS {
-            client.add_guardian(&Address::generate(&env));
+            let _ = client.try_add_guardian(&owner, &Address::generate(&env));
         }
         // One more must be rejected
         let err = client
-            .try_add_guardian(&Address::generate(&env))
+            .try_add_guardian(&owner, &Address::generate(&env))
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RecoveryError::TooManyGuardians);
@@ -681,21 +734,21 @@ mod tests {
 
     #[test]
     fn test_remove_guardian_succeeds() {
-        let (env, client, _, guardian) = setup();
+        let (env, client, owner, guardian) = setup();
         let g2 = Address::generate(&env);
-        client.add_guardian(&g2);
+        let _ = client.try_add_guardian(&owner, &g2);
         // Now we have 2 guardians, removing one should work
-        client.remove_guardian(&guardian);
+        let _ = client.try_remove_guardian(&owner, &guardian);
         assert!(!client.guardians().contains(&guardian));
         assert_eq!(client.guardians().len(), 1);
     }
 
     #[test]
     fn test_remove_guardian_emits_event() {
-        let (env, client, _, guardian) = setup();
+        let (env, client, owner, guardian) = setup();
         let g2 = Address::generate(&env);
-        client.add_guardian(&g2);
-        client.remove_guardian(&guardian);
+        client.add_guardian(&owner, &g2);
+        client.remove_guardian(&owner, &guardian);
         let events = env.events().all();
         // init + grd_add + grd_rm
         assert_eq!(events.len(), 3);
@@ -704,10 +757,10 @@ mod tests {
 
     #[test]
     fn test_remove_last_guardian_rejected() {
-        let (_env, client, _, guardian) = setup();
+        let (_env, client, owner, guardian) = setup();
         // Only 1 guardian, can't remove
         let err = client
-            .try_remove_guardian(&guardian)
+            .try_remove_guardian(&owner, &guardian)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RecoveryError::MinGuardiansRequired);
@@ -715,10 +768,10 @@ mod tests {
 
     #[test]
     fn test_remove_nonexistent_guardian_rejected() {
-        let (env, client, _, _) = setup();
+        let (env, client, owner, _) = setup();
         let stranger = Address::generate(&env);
         let err = client
-            .try_remove_guardian(&stranger)
+            .try_remove_guardian(&owner, &stranger)
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RecoveryError::GuardianNotFound);
@@ -730,17 +783,21 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxRecovery);
         let client = MuxRecoveryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
         let guardian = Address::generate(&env);
-        let err = client.try_add_guardian(&guardian).unwrap_err().unwrap();
+        let err = client
+            .try_add_guardian(&owner, &guardian)
+            .unwrap_err()
+            .unwrap();
         assert_eq!(err, RecoveryError::NotInitialized);
     }
 
     #[test]
     fn test_removed_guardian_cannot_initiate_recovery() {
-        let (env, client, _, guardian) = setup();
+        let (env, client, owner, guardian) = setup();
         let g2 = Address::generate(&env);
-        client.add_guardian(&g2);
-        client.remove_guardian(&guardian);
+        client.add_guardian(&owner, &g2);
+        client.remove_guardian(&owner, &guardian);
         // Removed guardian tries to initiate recovery
         let new_owner = Address::generate(&env);
         let err = client
@@ -752,9 +809,9 @@ mod tests {
 
     #[test]
     fn test_newly_added_guardian_can_initiate_recovery() {
-        let (env, client, _, _) = setup();
+        let (env, client, owner, _) = setup();
         let g2 = Address::generate(&env);
-        client.add_guardian(&g2);
+        client.add_guardian(&owner, &g2);
         // New guardian can initiate recovery
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&g2, &new_owner);
